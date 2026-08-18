@@ -53,12 +53,27 @@ export async function token(secret: string): Promise<string> {
 /**
  * Signs the session in. Shared by the login route and by Settings, so setting a
  * password from a logged-in tab re-signs that tab instead of locking it out.
+ *
+ * `secure` follows the request, not NODE_ENV. The production image sets
+ * NODE_ENV=production, so keying it off that marked the cookie Secure on a
+ * self-hosted box served over plain http, where the browser silently refuses to
+ * store it: login answered 200 and then every request looked unauthenticated, so it
+ * redirected back to the login page forever with nothing to explain why.
+ *
+ * A reverse proxy terminating TLS forwards `x-forwarded-proto`, which is why that
+ * header is trusted here. It is only trustworthy behind a proxy you control; the
+ * effect of a forged one is a cookie marked Secure that the browser then declines,
+ * which locks the forger out rather than anyone else.
  */
-export async function setSession(res: NextResponse, secret: string): Promise<void> {
+export async function setSession(res: NextResponse, secret: string, req?: Request): Promise<void> {
+  const forwarded = req?.headers.get('x-forwarded-proto')?.split(',')[0]?.trim()
+  const direct = req ? new URL(req.url).protocol === 'https:' : true
+  const https = forwarded ? forwarded === 'https' : direct
+
   res.cookies.set('wa_auth', await token(secret), {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: https,
     path: '/',
     maxAge: 60 * 60 * 24 * 30,
   })

@@ -14,6 +14,6 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const res = NextResponse.json({ ok: true })
-  await setSession(res, secret)
+  await setSession(res, secret, req)
   return res
 }

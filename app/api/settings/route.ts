@@ -72,6 +72,6 @@ export const PATCH = async (req: Request) => {
     return view()
   })
 
-  if (signedIn) await setSession(res, signedIn)
+  if (signedIn) await setSession(res, signedIn, req)
   return res
 }
