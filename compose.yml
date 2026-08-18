@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16-alpine
+    ports: ['5439:5432']
+    # Docker's 64MB default is too small for parallel query/vacuum once the
+    # message history gets large ("could not resize shared memory segment").
+    shm_size: 256mb
+    environment:
+      POSTGRES_PASSWORD: wa
+      POSTGRES_DB: wa_outreach
+    volumes: ['pgdata:/var/lib/postgresql/data']
+    # Building the app image alongside a running database can exhaust a small
+    # Docker VM and get Postgres killed; a restart policy brings it back rather
+    # than leaving the dashboard pointed at nothing.
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d wa_outreach']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    ports: ['7070:7070']
+    environment:
+      DATABASE_URL: postgres://postgres:wa@db:5432/wa_outreach
+      SESSION_DIR: /app/sessions
+    # WhatsApp credentials survive rebuilds — losing this volume means
+    # re-scanning the QR for every number.
+    volumes: ['sessions:/app/sessions']
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    # Long enough for the sockets to close cleanly on the way out. A socket killed
+    # mid-flight makes WhatsApp treat the next connect as a session conflict.
+    stop_grace_period: 20s
+
+volumes:
+  pgdata:
+  sessions:
