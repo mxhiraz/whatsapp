@@ -4,6 +4,7 @@ import makeWASocket, {
   BufferJSON,
   Browsers,
   DisconnectReason,
+  isLidUser,
   generateMessageIDV2,
   initAuthCreds,
   proto,
@@ -621,6 +622,39 @@ interface UpsertPayload {
   type: string
 }
 
+/**
+ * The phone number on the other end of an inbound message, or null if this is not a
+ * one-to-one chat we should record.
+ *
+ * WhatsApp no longer always addresses people by their phone number. A newer client
+ * uses a LID (`<id>@lid`), and the phone JID then arrives alongside it in
+ * `remoteJidAlt`, with the signal repository's mapping as a fallback. The previous
+ * code accepted only `@s.whatsapp.net` and skipped anything else without a word, so a
+ * reply from such a contact was dropped and left no trace to explain the empty inbox.
+ *
+ * Groups, broadcasts, status updates and newsletters are skipped on purpose: this is
+ * an outreach inbox for one-to-one replies, and a group message is not a reply from a
+ * lead. Those are logged too, at debug level, so "nothing arrived" is never a mystery.
+ */
+async function counterparty(sock: WASocket, key: { remoteJid?: string | null; remoteJidAlt?: string | null }): Promise<string | null> {
+  const jid = key.remoteJid
+  if (!jid) return null
+
+  if (jid.endsWith('@s.whatsapp.net')) return digitsOf(jid)
+
+  if (isLidUser(jid)) {
+    const alt = key.remoteJidAlt
+    if (alt?.endsWith('@s.whatsapp.net')) return digitsOf(alt)
+    const mapped = await sock.signalRepository?.lidMapping?.getPNForLID?.(jid).catch(() => null)
+    if (mapped) return digitsOf(mapped)
+    console.warn(`[wa] a reply came from ${jid} and no phone number could be resolved for it, so it was not recorded`)
+    return null
+  }
+
+  console.log(`[wa] ignoring a message from ${jid}: only one-to-one chats are recorded as replies`)
+  return null
+}
+
 async function onUpsert(phone: string, sock: WASocket, { messages, type }: UpsertPayload): Promise<void> {
   /*
    * 'notify' is a live message; 'append' is one WhatsApp handed us after the fact,
@@ -632,13 +666,17 @@ async function onUpsert(phone: string, sock: WASocket, { messages, type }: Upser
   if (type !== 'notify' && type !== 'append') return
   if (type === 'append') console.log(`[wa] ${phone} received ${messages.length} message(s) queued while it was offline`)
   for (const m of messages) {
-    if (m.key.fromMe || !m.key.remoteJid?.endsWith('@s.whatsapp.net')) continue
+    if (m.key.fromMe) continue
+
+    const from = await counterparty(sock, m.key)
+    if (!from) continue
+
     const body =
       m.message?.conversation ||
       m.message?.extendedTextMessage?.text ||
       m.message?.imageMessage?.caption ||
       '[media]'
-    await onInbound(phone, digitsOf(m.key.remoteJid), body, m.key.id ?? undefined)
+    await onInbound(phone, from, body, m.key.id ?? undefined)
 
     // Read the message after a human-ish pause; instant read receipts are a tell.
     const key = m.key

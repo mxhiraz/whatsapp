@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import type { Campaign, Lead, SenderHealth, Step } from './db.ts'
 import type { LIMITS, POLICY, Policy } from './safety.ts'
@@ -205,6 +205,16 @@ export function usePoll<T>(path: string, intervalMs = 5000): { data: T | null; r
     queryKey: [path],
     queryFn: () => api<T>(path),
     refetchInterval: intervalMs,
+    /*
+     * Keep showing the previous response while a new one is in flight.
+     *
+     * The path is part of the query key, so changing an inbox filter or typing in a
+     * search box starts a *different* query with no data of its own. Without this,
+     * `data` went null for one render, which blanked the panel back to its skeleton
+     * or its empty state and then filled in again. On a screen that also polls every
+     * few seconds, that reads as the content constantly redrawing itself.
+     */
+    placeholderData: keepPreviousData,
   })
   const refresh = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: [path] })

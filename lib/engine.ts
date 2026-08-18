@@ -419,7 +419,6 @@ async function tick(): Promise<number> {
     )
     await q(`update leads set status = 'active', sender_id = $2 where id = $1`, [msg.lead_id, sender.id])
     await scheduleNext(msg)
-    await finishDrainedCampaigns()
 
     // This number now waits out its own randomised gap. Other numbers are free
     // to send meanwhile, so throughput scales with how many you have linked.
@@ -430,6 +429,10 @@ async function tick(): Promise<number> {
     )
     await q(`update senders set next_ready_at = now() + ($2 || ' milliseconds')::interval where id = $1`, [sender.id, gap])
     note(`step ${msg.step_no} → +${msg.phone} via +${sender.phone} (${msg.campaign_name}, next in ${Math.round(gap / 1000)}s)`)
+
+    // After the send is reported, so the log never reads as though a campaign
+    // finished before the message that finished it went out.
+    await finishDrainedCampaigns()
 
     // Micro-break: work a burst, then rest, like a person going through a list.
     const burst = (sendsSinceBreak.get(sender.phone) ?? 0) + 1
