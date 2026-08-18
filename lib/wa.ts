@@ -60,10 +60,25 @@ interface Session {
 }
 
 /** phone -> the one session object every socket for that number shares. */
-const sessions = new Map<string, Promise<Session>>()
+/*
+ * Module state has to be pinned to globalThis in this app.
+ *
+ * Next compiles `instrumentation.ts` separately from the route handlers, so each one
+ * gets its own copy of this module. The engine boots from instrumentation and holds
+ * the sockets there; a route reading a plain module-level Map sees an empty one. That
+ * is why the dashboard reported every number "offline" while the log showed it online,
+ * and why a test send answered "not online" for a number that was sending fine.
+ */
+const shared = <T>(key: string, make: () => T): T => {
+  const g = globalThis as typeof globalThis & { __wa?: Record<string, unknown> }
+  g.__wa ??= {}
+  return (g.__wa[key] ??= make()) as T
+}
+
+const sessions = shared('sessions', () => new Map<string, Promise<Session>>())
 
 /** phone -> tail of the write chain, so writes for one number never interleave. */
-const writes = new Map<string, Promise<unknown>>()
+const writes = shared('writes', () => new Map<string, Promise<unknown>>())
 
 function serialise<T>(phone: string, work: () => Promise<T>): Promise<T> {
   const next = (writes.get(phone) ?? Promise.resolve()).then(work, work)
@@ -224,10 +239,10 @@ export interface LinkStatus {
 }
 
 /** phone -> live socket health. Distinct from the DB row, which holds policy. */
-const live = new Map<string, Link>()
+const live = shared('live', () => new Map<string, Link>())
 
 /** phone -> a connect in progress. The guard against opening a rival socket. */
-const opening = new Map<string, Promise<LinkStatus>>()
+const opening = shared('opening', () => new Map<string, Promise<LinkStatus>>())
 
 let sockets = 0
 
@@ -828,7 +843,7 @@ function withTimeout<T>(what: string, ms: number, work: Promise<T>, waId?: strin
  * ponytail: process-local and cleared wholesale when it gets big. A table would
  * survive restarts; worth it only if you are checking hundreds of thousands.
  */
-const lookups = new Map<string, { at: number; exists: boolean }>()
+const lookups = shared('lookups', () => new Map<string, { at: number; exists: boolean }>())
 const LOOKUP_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 /** false = the number has no WhatsApp account. Skipping beats burning a send. */

@@ -16,7 +16,18 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 const IDLE_MS = 30_000
 
 export interface LogLine { at: string; msg: string; level: 'info' | 'warn' }
-export const log: LogLine[] = []
+/*
+ * Shared with the route handlers through globalThis, for the reason documented in
+ * lib/wa.ts: instrumentation and the routes are compiled separately, so a plain
+ * module-level value is two values. The Activity feed reads `log` from a route.
+ */
+const shared = <T>(key: string, make: () => T): T => {
+  const g = globalThis as typeof globalThis & { __waEngine?: Record<string, unknown> }
+  g.__waEngine ??= {}
+  return (g.__waEngine[key] ??= make()) as T
+}
+
+export const log: LogLine[] = shared('log', () => [] as LogLine[])
 
 const note = (msg: string, level: LogLine['level'] = 'info'): void => {
   log.unshift({ at: new Date().toISOString(), msg, level })
@@ -25,7 +36,7 @@ const note = (msg: string, level: LogLine['level'] = 'info'): void => {
 }
 
 /** Trade-off: burst counters live in memory, so a restart begins a fresh burst. */
-const sendsSinceBreak = new Map<string, number>()
+const sendsSinceBreak = shared('sendsSinceBreak', () => new Map<string, number>())
 let running = false
 
 /**
